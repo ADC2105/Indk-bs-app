@@ -1,7 +1,8 @@
 "use client";
 
 import { useTransition } from "react";
-import { saveSettings, DAYS, DAY_LABELS, MEAL_TYPES } from "@/app/(app)/indstillinger/actions";
+import { saveSettings } from "@/app/(app)/indstillinger/actions";
+import { DAYS, DAY_LABELS, MEAL_TYPES } from "@/app/(app)/indstillinger/constants";
 
 type Store = { id: string; name: string };
 

@@ -3,18 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-
-export const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
-export const DAY_LABELS: Record<(typeof DAYS)[number], string> = {
-  mon: "Man",
-  tue: "Tir",
-  wed: "Ons",
-  thu: "Tor",
-  fri: "Fre",
-  sat: "Lør",
-  sun: "Søn",
-};
-export const MEAL_TYPES = ["morgenmad", "frokost", "aftensmad", "snack"] as const;
+import { DAYS, MEAL_TYPES } from "./constants";
 
 const settingsSchema = z.object({
   lat: z.coerce.number().nullable(),
