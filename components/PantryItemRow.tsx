@@ -10,7 +10,7 @@ type Props = {
   unit: string | null;
   useSoon: boolean;
   isStaple: boolean;
-  food?: { kcal: number; protein: number; source: string } | null;
+  food?: { kcal: number; protein: number; carbs: number; fat: number; source: string } | null;
 };
 
 export default function PantryItemRow({ id, name, quantity, unit, useSoon, isStaple, food }: Props) {
@@ -23,9 +23,15 @@ export default function PantryItemRow({ id, name, quantity, unit, useSoon, isSta
         <p className="text-xs text-gray-500">
           {quantity != null ? `${quantity}${unit ? " " + unit : ""}` : "ukendt mængde"}
           {useSoon && " · brug snart"}
-          {food &&
-            ` · ${food.source === "estimate" ? "≈" : ""}${Math.round(food.kcal)} kcal/${Math.round(food.protein)} g protein pr. 100 g`}
         </p>
+        {food && (
+          <p className="text-xs text-gray-400">
+            {food.source === "estimate" && "≈ "}
+            {Math.round(food.kcal)} kcal · {Math.round(food.protein)} g protein · {Math.round(food.carbs)} g kulhydrat ·{" "}
+            {Math.round(food.fat)} g fedt{" "}
+            <span className="text-gray-300">(pr. 100 g)</span>
+          </p>
+        )}
       </div>
 
       {!isStaple && (
