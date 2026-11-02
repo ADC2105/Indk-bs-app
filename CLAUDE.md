@@ -62,9 +62,11 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 ANTHROPIC_API_KEY
-CLAUDE_MODEL_PLANNER   (standard: claude-sonnet-5-5)
-CLAUDE_MODEL_FAST      (standard: claude-haiku-5-5)
+CLAUDE_MODEL_PLANNER   (standard: claude-sonnet-5)
+CLAUDE_MODEL_FAST      (standard: claude-haiku-4-5-20251001)
 ```
+
+SPEC.md's oprindelige standardnavne (`claude-sonnet-5-5`, `claude-haiku-5-5`) var ikke gyldige modelnavne - `claude-sonnet-5-5` fejlede direkte ("tool_choice ... not supported for this model"), formentlig fordi navnet ikke matcher noget rigtigt Anthropic-modelnavn. Rettet til de faktiske modelnavne i fase 4.
 
 ## Kør appen lokalt
 
