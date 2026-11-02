@@ -40,7 +40,7 @@ export async function normalizeNextBatch(): Promise<
 
   const { data: toNormalize, error: fetchError } = await supabase
     .from("offers")
-    .select("id, heading, description, price, quantity_text")
+    .select("id, heading, price, quantity_text, raw")
     .is("ingredient_name", null)
     .limit(NORMALIZE_BATCH_SIZE);
 
@@ -54,7 +54,7 @@ export async function normalizeNextBatch(): Promise<
   const input: OfferToNormalize[] = toNormalize.map((o) => ({
     id: o.id,
     heading: o.heading,
-    description: null,
+    description: (o.raw as { description?: string } | null)?.description ?? null,
     price: o.price,
     quantityText: o.quantity_text,
   }));
