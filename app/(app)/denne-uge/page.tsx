@@ -5,11 +5,20 @@ import MealCard from "@/components/MealCard";
 
 export const maxDuration = 60;
 
+type DayPersonStatus = {
+  date: string;
+  personId: string;
+  actual: { kcal: number; protein: number; carbs: number; fat: number };
+  target: { kcal: number; protein: number; carbs: number; fat: number };
+  evaluation: { overall: "grøn" | "gul" | "rød" };
+};
+
 type Totals = {
   cost: number;
   budgetStatus: "grøn" | "gul" | "rød";
   violations: string[];
   round: number;
+  dayPersonStatus: DayPersonStatus[];
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -36,21 +45,32 @@ export default async function DenneUgePage() {
     );
   }
 
-  const { data: meals } = await supabase
-    .from("planned_meals")
-    .select("id, date, meal_type, locked, servings, computed_status, recipes(id, title, description, base_servings, prep_minutes, steps, recipe_ingredients(name, grams_raw))")
-    .eq("plan_id", plan.id)
-    .order("date");
+  const [{ data: meals }, { data: people }] = await Promise.all([
+    supabase
+      .from("planned_meals")
+      .select("id, date, meal_type, locked, servings, computed_status, recipes(id, title, description, base_servings, prep_minutes, steps, recipe_ingredients(name, grams_raw))")
+      .eq("plan_id", plan.id)
+      .order("date"),
+    supabase.from("people").select("id, name"),
+  ]);
 
   const totals = (plan.totals ?? {}) as Partial<Totals>;
   const budget = plan.budget as number;
   const budgetPct = budget > 0 ? Math.min(100, Math.round(((totals.cost ?? 0) / budget) * 100)) : 0;
+  const nameById = new Map((people ?? []).map((p) => [p.id, p.name]));
 
   const byDate = new Map<string, typeof meals>();
   for (const meal of meals ?? []) {
     const list = byDate.get(meal.date) ?? [];
     list.push(meal);
     byDate.set(meal.date, list);
+  }
+
+  const statusByDate = new Map<string, DayPersonStatus[]>();
+  for (const dp of totals.dayPersonStatus ?? []) {
+    const list = statusByDate.get(dp.date) ?? [];
+    list.push(dp);
+    statusByDate.set(dp.date, list);
   }
 
   return (
@@ -86,6 +106,23 @@ export default async function DenneUgePage() {
       {Array.from(byDate.entries()).map(([date, dayMeals]) => (
         <section key={date}>
           <h2 className="mb-1 text-sm font-semibold text-gray-700">{date}</h2>
+
+          {(statusByDate.get(date) ?? []).length > 0 && (
+            <div className="mb-2 flex flex-col gap-1">
+              {(statusByDate.get(date) ?? []).map((dp) => (
+                <div
+                  key={dp.personId}
+                  className={`rounded-lg border px-2 py-1 text-xs ${STATUS_COLOR[dp.evaluation.overall]}`}
+                >
+                  <span className="font-medium">{nameById.get(dp.personId) ?? "?"}</span>{" "}
+                  {Math.round(dp.actual.kcal)}/{Math.round(dp.target.kcal)} kcal · {Math.round(dp.actual.protein)}/
+                  {Math.round(dp.target.protein)} g protein · {Math.round(dp.actual.carbs)}/{Math.round(dp.target.carbs)} g kulhydrat ·{" "}
+                  {Math.round(dp.actual.fat)}/{Math.round(dp.target.fat)} g fedt
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex flex-col gap-2">
             {(dayMeals ?? []).map((meal) => (
               <MealCard

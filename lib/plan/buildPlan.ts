@@ -71,6 +71,7 @@ function buildUserMessage(
   slot: Slot,
   locked: LockedMeal[],
   violations: string[],
+  alreadyPlanned: PlannerMeal[],
 ): string {
   const peopleLines = input.people
     .map((p) => `${p.id} | ${p.name} | mål: ${p.kcal} kcal, ${p.protein_g} g protein, ${p.carbs_g} g kulhydrat, ${p.fat_g} g fedt | tilstand: ${p.macroMode}`)
@@ -82,7 +83,13 @@ function buildUserMessage(
       ? `\n\nDEN NUVÆRENDE PLAN HOLDER IKKE HELT - KONKRETE BRUD, DER HELST SKAL RETTES, HVIS DENNE RET BERØRER DEM:\n${violations.join("\n")}`
       : "";
 
-  return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
+  const plannedLines = [...locked.map((l) => l.recipes?.title ?? "?"), ...alreadyPlanned.map((m) => m.title)];
+  const plannedBlock =
+    plannedLines.length > 0
+      ? `\n\nALLEREDE PLANLAGT DENNE UGE (brug ikke samme hovedråvare/protein igen her, medmindre det er en helt anden type ret):\n${plannedLines.join(", ")}`
+      : "";
+
+  return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}${plannedBlock}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nVIGTIGT OM BEHOLDNING: kilde "pantry" må kun bruges, hvis varen og mængden reelt findes i beholdningslisten ovenfor, og kun i ÉT måltid denne uge - er den allerede brugt (se "allerede planlagt"), eller er mængden større end det, der står på lager, så brug kilde "buy" i stedet. Basisvarer ("staple") må gerne genbruges frit.\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
 }
 
 async function getLockedMeals(supabase: SupabaseClient, planId: string): Promise<LockedMeal[]> {
@@ -92,6 +99,52 @@ async function getLockedMeals(supabase: SupabaseClient, planId: string): Promise
     .eq("plan_id", planId)
     .eq("locked", true);
   return (data ?? []) as unknown as LockedMeal[];
+}
+
+/**
+ * Claude ved ikke, hvor meget af en beholdningsvare de andre måltider
+ * denne uge allerede har "brugt", så den kan nemt påstå, at den samme
+ * vare kommer gratis fra beholdningen i flere retter. Her tjekkes hvert
+ * "pantry"-sourcet ingrediens mod den faktiske beholdning (i den
+ * rækkefølge, retterne er genereret i) - ugyldige eller for store krav
+ * bliver omdøbt til "buy", så de får en rigtig pris.
+ */
+async function capPantryUsage(supabase: SupabaseClient, meals: PlannerMeal[]): Promise<void> {
+  const { data: pantryRows } = await supabase.from("pantry_items").select("id, quantity").eq("is_staple", false);
+  const remainingById = new Map((pantryRows ?? []).map((p) => [p.id, p.quantity]));
+  const usedWithoutQuantity = new Set<string>();
+
+  for (const meal of meals) {
+    for (const ing of meal.ingredients) {
+      if (ing.source !== "pantry") continue;
+
+      const pantryId = ing.pantry_item_id;
+      if (!pantryId || !remainingById.has(pantryId)) {
+        ing.source = "buy";
+        ing.pantry_item_id = null;
+        continue;
+      }
+
+      const remaining = remainingById.get(pantryId);
+      if (remaining == null) {
+        // Ukendt mængde ("nok til én ret") - tillad kun ét krav pr. vare.
+        if (usedWithoutQuantity.has(pantryId)) {
+          ing.source = "buy";
+          ing.pantry_item_id = null;
+        } else {
+          usedWithoutQuantity.add(pantryId);
+        }
+        continue;
+      }
+
+      if (remaining >= ing.grams_raw) {
+        remainingById.set(pantryId, remaining - ing.grams_raw);
+      } else {
+        ing.source = "buy";
+        ing.pantry_item_id = null;
+      }
+    }
+  }
 }
 
 async function pendingPriceNamesFor(supabase: SupabaseClient, meals: PlannerMeal[]): Promise<string[]> {
@@ -189,7 +242,7 @@ export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: str
     const { data: plan } = await supabase.from("week_plans").select("macro_modes, wishes").eq("id", planId).single();
     const input = await gatherPlanInput(supabase, plan?.macro_modes ?? {}, plan?.wishes ?? "");
 
-    const userMessage = buildUserMessage(input, slot, locked, draft.violations);
+    const userMessage = buildUserMessage(input, slot, locked, draft.violations, draft.meals);
     const result = await generateMealPlan(supabase, userMessage);
     if (result.meals.length > 0) {
       draft.meals.push({ ...result.meals[0], date: slot.date, meal_type: slot.meal_type });
@@ -197,6 +250,7 @@ export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: str
     draft.pendingSlots = draft.pendingSlots.slice(1);
 
     if (draft.pendingSlots.length === 0) {
+      await capPantryUsage(supabase, draft.meals);
       draft.pendingFoodNames = Array.from(new Set(draft.meals.flatMap((m) => m.ingredients.map((i) => i.name.toLowerCase()))));
       draft.pendingPriceNames = await pendingPriceNamesFor(supabase, draft.meals);
       draft.phase = draft.pendingFoodNames.length > 0 ? "foods" : draft.pendingPriceNames.length > 0 ? "prices" : "ready";
