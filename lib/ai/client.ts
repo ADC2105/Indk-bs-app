@@ -15,14 +15,28 @@ type CallClaudeToolArgs<T> = {
   inputSchema: Anthropic.Tool.InputSchema;
   zodSchema: ZodType<T>;
   maxTokens?: number;
+  /** Millisekunder pr. forsøg. Standard 20s, passende til små/hurtige kald. */
+  timeoutMs?: number;
+  /**
+   * Antal forsøg i alt. Standard 2 (prøv igen én gang ved fejl, jf.
+   * SPEC.md). For langsomme kald (store svar, fx hele madplaner) SKAL dette
+   * være 1: 2 × et langt timeoutMs kan nemt overstige Vercels 60s-grænse
+   * for serverfunktioner, og funktionen bliver så slået ihjel af
+   * platformen midt i andet forsøg, uden at nogen fejl når at blive vist.
+   */
+  maxAttempts?: number;
 };
 
 /**
  * Kalder Claude med tool use, så svaret altid er struktureret JSON.
- * Validerer med zod og prøver én gang mere ved fejl (API-fejl, manglende
- * værktøjskald eller valideringsfejl), som krævet i SPEC.md.
+ * Validerer med zod og prøver igen ved fejl, jf. SPEC.md - men kun hvis der
+ * reelt er tid til et nyt forsøg inden for Vercels tidsgrænse (se
+ * maxAttempts).
  */
 export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T> {
+  const timeoutMs = args.timeoutMs ?? 20_000;
+  const maxAttempts = args.maxAttempts ?? 2;
+
   const attempt = async () => {
     const response = await anthropic.messages.create(
       {
@@ -41,7 +55,7 @@ export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T>
       },
       // Fejl hurtigt i stedet for at hænge - SDK'ens standard-timeout (10
       // min.) er langt over Vercels tidsgrænse for serverfunktioner.
-      { timeout: 45_000 },
+      { timeout: timeoutMs },
     );
 
     await args.supabase.from("ai_calls").insert({
@@ -64,9 +78,13 @@ export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T>
     return args.zodSchema.parse(toolUse.input);
   };
 
-  try {
-    return await attempt();
-  } catch {
-    return await attempt();
+  let lastError: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastError = err;
+    }
   }
+  throw lastError;
 }

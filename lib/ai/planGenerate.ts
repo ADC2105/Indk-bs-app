@@ -82,7 +82,12 @@ async function callPlanner(
     toolDescription: "Gem de foreslåede/rettede retter",
     inputSchema,
     zodSchema: planResultSchema,
-    maxTokens: 16000,
+    maxTokens: 8000,
+    // Ét langt kald uden retry: 2 forsøg × et langt timeout kan nemt
+    // overstige Vercels 60s-grænse og få funktionen slået ihjel midt i et
+    // andet forsøg, uden at nogen fejl når frem til brugeren.
+    timeoutMs: 50_000,
+    maxAttempts: 1,
   });
 }
 

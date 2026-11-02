@@ -120,6 +120,7 @@ export async function normalizeOffers(
       inputSchema,
       zodSchema: batchResultSchema,
       maxTokens: 8192,
+      timeoutMs: 25_000,
     });
 
     results.push(...result.tilbud);

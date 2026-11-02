@@ -80,6 +80,7 @@ export async function extractOffersFromText(
     inputSchema,
     zodSchema: resultSchema,
     maxTokens: 8192,
+    timeoutMs: 25_000,
   });
 
   return result.tilbud.map((o) => ({
@@ -115,6 +116,7 @@ export async function extractOffersFromImages(
     inputSchema,
     zodSchema: resultSchema,
     maxTokens: 8192,
+    timeoutMs: 25_000,
   });
 
   return result.tilbud.map((o) => ({
