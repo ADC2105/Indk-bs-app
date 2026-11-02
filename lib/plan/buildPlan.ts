@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { gatherPlanInput, formatOffersCompact, formatPantryCompact } from "./gatherInput";
-import { generateMealPlan, fixMealPlan, type PlannerMeal } from "@/lib/ai/planGenerate";
+import { generateMealPlan, type PlannerMeal } from "@/lib/ai/planGenerate";
 import { matchIngredientToFood } from "@/lib/foods/matchIngredient";
 import { estimatePrice } from "@/lib/ai/priceEstimate";
 import { packsNeeded, packCost } from "@/lib/calc/unitPrice";
@@ -30,28 +30,31 @@ type LockedMeal = {
 };
 
 /**
- * Hele genereringen er delt op i mange små serverkald (start -> flere
- * resolve-bidder -> finaliser), fordi ét samlet kald - en hel uges retter
- * foreslået af Claude OG alle ingredienser matchet/prissat - nemt
- * overstiger Vercels tidsgrænse for serverfunktioner, selv med parallelle
- * AI-kald. Tilstanden undervejs gemmes i week_plans.totals.draft, så
- * klienten kan kalde næste bid, uden at noget går tabt.
+ * Genereringen er delt op i mange små serverkald, fordi selv ét Claude-kald
+ * for en hel uges retter ad gangen viste sig for langsomt til at nå inden
+ * for Vercels 60s-grænse for serverfunktioner (bekræftet i Vercels egne
+ * logs: "Task timed out after 60 seconds"). Derfor bedes Claude om én ret
+ * ad gangen i stedet. Tilstanden undervejs gemmes i week_plans.totals.draft.
  */
+type Slot = { date: string; meal_type: MealType };
+
 type Draft = {
   meals: PlannerMeal[];
+  pendingSlots: Slot[];
+  violations: string[]; // kontekst for en evt. tilretningsrunde
   pendingFoodNames: string[];
   foodIdByName: Record<string, string | null>;
   pendingPriceNames: string[];
   priceByName: Record<string, number>;
-  phase: "foods" | "prices" | "ready";
+  phase: "meals" | "foods" | "prices" | "ready";
   round: number;
 };
 
 const BATCH_SIZE = 5;
 
-function slotsToFill(mealGrid: WeekMealGrid, locked: LockedMeal[]): { date: string; meal_type: MealType }[] {
+function slotsToFill(mealGrid: WeekMealGrid, locked: LockedMeal[]): Slot[] {
   const lockedKeys = new Set(locked.map((l) => `${l.date}|${l.meal_type}`));
-  const slots: { date: string; meal_type: MealType }[] = [];
+  const slots: Slot[] = [];
   for (const [date, meals] of Object.entries(mealGrid)) {
     for (const [mealType, cell] of Object.entries(meals)) {
       if (!cell?.on) continue;
@@ -65,17 +68,21 @@ function slotsToFill(mealGrid: WeekMealGrid, locked: LockedMeal[]): { date: stri
 
 function buildUserMessage(
   input: Awaited<ReturnType<typeof gatherPlanInput>>,
-  slots: { date: string; meal_type: MealType }[],
+  slot: Slot,
   locked: LockedMeal[],
+  violations: string[],
 ): string {
   const peopleLines = input.people
     .map((p) => `${p.id} | ${p.name} | mål: ${p.kcal} kcal, ${p.protein_g} g protein, ${p.carbs_g} g kulhydrat, ${p.fat_g} g fedt | tilstand: ${p.macroMode}`)
     .join("\n");
 
-  const slotsLines = slots.map((s) => `${s.date} ${s.meal_type}`).join("\n");
   const lockedLines = locked.map((l) => `${l.date} ${l.meal_type}: ${l.recipes?.title ?? "?"} (LÅST, foreslå ikke denne)`).join("\n");
+  const violationsBlock =
+    violations.length > 0
+      ? `\n\nDEN NUVÆRENDE PLAN HOLDER IKKE HELT - KONKRETE BRUD, DER HELST SKAL RETTES, HVIS DENNE RET BERØRER DEM:\n${violations.join("\n")}`
+      : "";
 
-  return `MÅLTIDER, DER SKAL FORESLÅS:\n${slotsLines || "(ingen)"}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.`;
+  return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
 }
 
 async function getLockedMeals(supabase: SupabaseClient, planId: string): Promise<LockedMeal[]> {
@@ -110,7 +117,25 @@ async function loadDraft(supabase: SupabaseClient, planId: string): Promise<Draf
   return (plan?.totals as { draft?: Draft } | null)?.draft ?? null;
 }
 
-/** Trin 1: gem rammerne, bed Claude om forslag (ét kald), forbered resten til bidvis behandling. */
+function remainingCount(draft: Draft): number {
+  return draft.pendingSlots.length + draft.pendingFoodNames.length + draft.pendingPriceNames.length;
+}
+
+function freshDraft(pendingSlots: Slot[], violations: string[], round: number): Draft {
+  return {
+    meals: [],
+    pendingSlots,
+    violations,
+    pendingFoodNames: [],
+    foodIdByName: {},
+    pendingPriceNames: [],
+    priceByName: {},
+    phase: pendingSlots.length > 0 ? "meals" : "ready",
+    round,
+  };
+}
+
+/** Trin 1: gem rammerne og find ud af, hvilke måltider der mangler. Intet AI-kald endnu. */
 export async function startPlanGeneration(supabase: SupabaseClient, params: BuildPlanParams) {
   const { data: existingPlan } = await supabase.from("week_plans").select("id").eq("week_start", params.weekStart).maybeSingle();
 
@@ -147,38 +172,36 @@ export async function startPlanGeneration(supabase: SupabaseClient, params: Buil
 
   const locked = await getLockedMeals(supabase, planId);
   const slots = slotsToFill(params.mealGrid, locked);
-  const input = await gatherPlanInput(supabase, params.macroModes, params.wishes);
-
-  let meals: PlannerMeal[] = [];
-  if (slots.length > 0) {
-    const userMessage = buildUserMessage(input, slots, locked);
-    const result = await generateMealPlan(supabase, userMessage);
-    meals = result.meals;
-  }
-
-  const pendingFoodNames = Array.from(new Set(meals.flatMap((m) => m.ingredients.map((i) => i.name.toLowerCase()))));
-  const pendingPriceNames = await pendingPriceNamesFor(supabase, meals);
-
-  const draft: Draft = {
-    meals,
-    pendingFoodNames,
-    foodIdByName: {},
-    pendingPriceNames,
-    priceByName: {},
-    phase: pendingFoodNames.length > 0 ? "foods" : pendingPriceNames.length > 0 ? "prices" : "ready",
-    round: 0,
-  };
+  const draft = freshDraft(slots, [], 0);
   await saveDraft(supabase, planId, draft);
 
-  return { planId, remaining: pendingFoodNames.length + pendingPriceNames.length, phase: draft.phase };
+  return { planId, remaining: remainingCount(draft), phase: draft.phase };
 }
 
-/** Trin 2 (kaldes gentagne gange): matcher/prissætter nogle få ingredienser ad gangen. */
+/** Trin 2 (kaldes gentagne gange): foreslår én ret, eller matcher/prissætter nogle få ingredienser. */
 export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: string) {
   const draft = await loadDraft(supabase, planId);
   if (!draft) throw new Error("Ingen plan under behandling.");
 
-  if (draft.phase === "foods") {
+  if (draft.phase === "meals") {
+    const slot = draft.pendingSlots[0];
+    const locked = await getLockedMeals(supabase, planId);
+    const { data: plan } = await supabase.from("week_plans").select("macro_modes, wishes").eq("id", planId).single();
+    const input = await gatherPlanInput(supabase, plan?.macro_modes ?? {}, plan?.wishes ?? "");
+
+    const userMessage = buildUserMessage(input, slot, locked, draft.violations);
+    const result = await generateMealPlan(supabase, userMessage);
+    if (result.meals.length > 0) {
+      draft.meals.push({ ...result.meals[0], date: slot.date, meal_type: slot.meal_type });
+    }
+    draft.pendingSlots = draft.pendingSlots.slice(1);
+
+    if (draft.pendingSlots.length === 0) {
+      draft.pendingFoodNames = Array.from(new Set(draft.meals.flatMap((m) => m.ingredients.map((i) => i.name.toLowerCase()))));
+      draft.pendingPriceNames = await pendingPriceNamesFor(supabase, draft.meals);
+      draft.phase = draft.pendingFoodNames.length > 0 ? "foods" : draft.pendingPriceNames.length > 0 ? "prices" : "ready";
+    }
+  } else if (draft.phase === "foods") {
     const batch = draft.pendingFoodNames.slice(0, BATCH_SIZE);
     await Promise.all(
       batch.map(async (name) => {
@@ -211,7 +234,7 @@ export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: str
   }
 
   await saveDraft(supabase, planId, draft);
-  return { remaining: draft.pendingFoodNames.length + draft.pendingPriceNames.length, phase: draft.phase };
+  return { remaining: remainingCount(draft), phase: draft.phase };
 }
 
 /** Trin 3: ren beregning (ingen AI) - butiksvalg, status, gem. */
@@ -450,9 +473,9 @@ export async function finalizePlanGeneration(supabase: SupabaseClient, planId: s
   };
 }
 
-/** Starter en tilretningsrunde: ét Claude-kald, forbereder derefter bidvis behandling igen. */
+/** Starter en tilretningsrunde: genererer igen, ét måltid ad gangen, med de konkrete brud som kontekst. */
 export async function startPlanFix(supabase: SupabaseClient, planId: string) {
-  const { data: plan } = await supabase.from("week_plans").select("*").eq("id", planId).single();
+  const { data: plan } = await supabase.from("week_plans").select("totals, meal_grid").eq("id", planId).single();
   if (!plan) throw new Error("Planen findes ikke.");
 
   const round = (plan.totals as { round?: number })?.round ?? 0;
@@ -462,63 +485,9 @@ export async function startPlanFix(supabase: SupabaseClient, planId: string) {
   }
 
   const locked = await getLockedMeals(supabase, planId);
-  const { data: currentUnlocked } = await supabase
-    .from("planned_meals")
-    .select("date, meal_type, servings, recipes(title, description, base_servings, prep_minutes, steps, recipe_ingredients(name, grams_raw))")
-    .eq("plan_id", planId)
-    .eq("locked", false);
-
-  const currentMeals: PlannerMeal[] = (currentUnlocked ?? []).map((m) => {
-    const recipe = m.recipes as unknown as {
-      title: string;
-      description: string | null;
-      base_servings: number;
-      prep_minutes: number | null;
-      steps: string[];
-      recipe_ingredients: { name: string; grams_raw: number }[];
-    } | null;
-    return {
-      date: m.date,
-      meal_type: m.meal_type,
-      title: recipe?.title ?? "",
-      description: recipe?.description ?? null,
-      base_servings: recipe?.base_servings ?? m.servings,
-      prep_minutes: recipe?.prep_minutes ?? null,
-      steps: recipe?.steps ?? [],
-      ingredients: (recipe?.recipe_ingredients ?? []).map((ri) => ({
-        name: ri.name,
-        grams_raw: ri.grams_raw,
-        source: "buy" as const,
-        offer_id: null,
-        pantry_item_id: null,
-      })),
-    };
-  });
-
-  const fixMessage = `NUVÆRENDE RETTER:\n${JSON.stringify(currentMeals)}\n\nKONKRETE BRUD, DER SKAL RETTES:\n${previousViolations.join("\n")}\n\nLÅSTE MÅLTIDER (må ikke røres):\n${locked.map((l) => `${l.date} ${l.meal_type}: ${l.recipes?.title}`).join("\n") || "(ingen)"}`;
-
-  let meals = currentMeals;
-  try {
-    const fixed = await fixMealPlan(supabase, fixMessage);
-    meals = fixed.meals;
-  } catch {
-    // Behold de nuværende retter, hvis tilretningen fejler.
-  }
-
-  const pendingFoodNames = Array.from(new Set(meals.flatMap((m) => m.ingredients.map((i) => i.name.toLowerCase()))));
-  const pendingPriceNames = await pendingPriceNamesFor(supabase, meals);
-  const nextRound = round + 1;
-
-  const draft: Draft = {
-    meals,
-    pendingFoodNames,
-    foodIdByName: {},
-    pendingPriceNames,
-    priceByName: {},
-    phase: pendingFoodNames.length > 0 ? "foods" : pendingPriceNames.length > 0 ? "prices" : "ready",
-    round: nextRound,
-  };
+  const slots = slotsToFill(plan.meal_grid as WeekMealGrid, locked);
+  const draft = freshDraft(slots, previousViolations, round + 1);
   await saveDraft(supabase, planId, draft);
 
-  return { planId, remaining: pendingFoodNames.length + pendingPriceNames.length, phase: draft.phase, done: false };
+  return { planId, remaining: remainingCount(draft), phase: draft.phase, done: slots.length === 0 };
 }
