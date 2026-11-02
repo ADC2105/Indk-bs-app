@@ -48,7 +48,44 @@ type Draft = {
   priceByName: Record<string, number>;
   phase: "meals" | "foods" | "prices" | "ready";
   round: number;
+  /** Løbende, hurtigt (ikke-AI) prisestimat for allerede genererede retter denne kørsel. */
+  spentSoFar: number;
 };
+
+/**
+ * Hurtigt, ikke-AI-baseret prisestimat for én ret, kun til at holde styr på
+ * et løbende forbrug, mens resten af ugen genereres - den rigtige pris
+ * (med tilbud, prisliste og AI-estimater) regnes først ud ved finalize.
+ * "offer"/"buy" slås op mod reelle data, hvor det er hurtigt; ellers bruges
+ * et fast gæt, så løbet ikke bliver blokeret af nye AI-kald.
+ */
+async function quickEstimateMealCost(supabase: SupabaseClient, meal: PlannerMeal): Promise<number> {
+  const FALLBACK_PER_ITEM = 18;
+  let total = 0;
+
+  const offerIds = meal.ingredients.filter((i) => i.source === "offer" && i.offer_id).map((i) => i.offer_id!);
+  const offerPriceById = new Map<string, number>();
+  if (offerIds.length > 0) {
+    const { data } = await supabase.from("offers").select("id, total_price").in("id", offerIds);
+    for (const o of data ?? []) offerPriceById.set(o.id, o.total_price ?? FALLBACK_PER_ITEM);
+  }
+
+  const buyNames = Array.from(new Set(meal.ingredients.filter((i) => i.source === "buy").map((i) => i.name.toLowerCase())));
+  const priceByName = new Map<string, number>();
+  if (buyNames.length > 0) {
+    const { data } = await supabase.from("price_list").select("name, price").in("name", buyNames);
+    for (const p of data ?? []) priceByName.set(p.name.toLowerCase(), p.price);
+  }
+
+  for (const ing of meal.ingredients) {
+    if (ing.source === "offer" && ing.offer_id) {
+      total += offerPriceById.get(ing.offer_id) ?? FALLBACK_PER_ITEM;
+    } else if (ing.source === "buy") {
+      total += priceByName.get(ing.name.toLowerCase()) ?? FALLBACK_PER_ITEM;
+    }
+  }
+  return total;
+}
 
 const BATCH_SIZE = 5;
 
@@ -93,7 +130,7 @@ function buildUserMessage(
 
   const budgetBlock =
     budgetPerMeal != null
-      ? `\n\nBUDGET: husstanden har i alt ca. ${Math.round(budgetPerMeal)} kr. at bruge på NYE indkøb til denne ene ret (varer fra beholdning/basisvarer/tilbud tæller ikke med i det beløb, men almindelige køb skal holdes inden for det). Prioritér tilbud og billige råvarer for at holde budgettet - det er et loft, ikke kun en rettesnor.`
+      ? `\n\nBUDGET (HÅRDT LOFT - vigtigere end variation eller smag): denne ene ret må højst koste ${Math.round(budgetPerMeal)} kr. i alt for tilbuds- og købsvarer tilsammen (kun "pantry" og "staple" er gratis). Det beløb er allerede justeret ned, hvis tidligere retter denne uge har brugt mere end deres andel, så hold dig under det. Vælg billige ingredienser (kylling, æg, bønner, pasta, ris, sæsongrønt, kartofler) og brug tilbud aktivt - undgå oksefilet, laks, rejer og andre dyre varer, medmindre de er markeret SKAL_MED. Brug hellere færre/billigere ingredienser end at overskride beløbet.`
       : "";
 
   return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}${plannedBlock}${budgetBlock}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nVIGTIGT OM BEHOLDNING: kilde "pantry" må kun bruges, hvis varen og mængden reelt findes i beholdningslisten ovenfor, og kun i ÉT måltid denne uge - er den allerede brugt (se "allerede planlagt"), eller er mængden større end det, der står på lager, så brug kilde "buy" i stedet. Basisvarer ("staple") må gerne genbruges frit.\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
@@ -192,6 +229,7 @@ function freshDraft(pendingSlots: Slot[], violations: string[], round: number): 
     priceByName: {},
     phase: pendingSlots.length > 0 ? "meals" : "ready",
     round,
+    spentSoFar: 0,
   };
 }
 
@@ -249,13 +287,20 @@ export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: str
     const { data: plan } = await supabase.from("week_plans").select("macro_modes, wishes, budget").eq("id", planId).single();
     const input = await gatherPlanInput(supabase, plan?.macro_modes ?? {}, plan?.wishes ?? "");
 
-    const totalSlotsThisRun = draft.meals.length + draft.pendingSlots.length;
-    const budgetPerMeal = plan?.budget && totalSlotsThisRun > 0 ? plan.budget / totalSlotsThisRun : null;
+    // Dynamisk budget pr. ret: resterende beløb delt med resterende antal
+    // retter - IKKE et statisk gennemsnit. Falder, hvis tidligere retter
+    // denne kørsel allerede har brugt mere end deres andel, så presset for
+    // at spare op stiger i stedet for at blive ignoreret resten af ugen.
+    const remainingSlots = draft.pendingSlots.length;
+    const remainingBudget = (plan?.budget ?? 0) - draft.spentSoFar;
+    const budgetPerMeal = plan?.budget && remainingSlots > 0 ? Math.max(10, remainingBudget / remainingSlots) : null;
 
     const userMessage = buildUserMessage(input, slot, locked, draft.violations, draft.meals, budgetPerMeal);
     const result = await generateMealPlan(supabase, userMessage);
     if (result.meals.length > 0) {
-      draft.meals.push({ ...result.meals[0], date: slot.date, meal_type: slot.meal_type });
+      const newMeal = { ...result.meals[0], date: slot.date, meal_type: slot.meal_type };
+      draft.meals.push(newMeal);
+      draft.spentSoFar += await quickEstimateMealCost(supabase, newMeal);
     }
     draft.pendingSlots = draft.pendingSlots.slice(1);
 
