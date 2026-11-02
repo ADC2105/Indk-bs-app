@@ -8,13 +8,13 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
   - Husk: Vercel-projektets Framework Preset skal stå på "Next.js" (ingen build/output-overrides) – blev rettet manuelt efter første deploy.
 - **Fase 1 (Grunddata): færdig og testet.** Alle 15 tabeller migreret, Indstillinger (personer, butikker, måltidsgitter, måltidsandele, budget m.m.), Beholdning med AI-tolket hurtig tilføjelse, basisvare-checkliste og seed-data (2 personer, lille beholdning, eksempeltilbud, ~90 estimerede priser). Bekræftet i produktion: fritekst → beholdning, og indstillinger gemmer.
   - Faldgrube at huske: filer med `"use server"` må kun eksportere async-funktioner. Konstanter (DAYS, MEAL_TYPES) lå først i `indstillinger/actions.ts` og gav en ødelagt reference i produktion (men ikke lokalt/i build) – flyttet til egen `constants.ts`. Tjek for dette mønster, hvis en ny "virker lokalt, fejler i prod"-fejl dukker op i en `actions.ts`-fil.
-- **Fase 2 (Tilbud): bygget, afventer din test.** Tjek-endpointet er verificeret med live testkald (`https://squid-api.tjek.com/v2`). Kædernes dealer-id'er fundet og hardkodes ikke - de caches i `stores.tjek_dealer_id`, første gang de slås op:
+- **Fase 2 (Tilbud): færdig og testet.** Tjek-endpointet er verificeret med live testkald (`https://squid-api.tjek.com/v2`). Kædernes dealer-id'er fundet og hardkodes ikke - de caches i `stores.tjek_dealer_id`, første gang de slås op:
   - Lidl `71c90`, Netto `9ba51`, Rema 1000 `11deC`, Kvickly `c1edq`.
   - `lib/offers/tjekSource.ts` bag `OfferSource`-interfacet henter kataloger inden for radius, vælger ugens dagligvarekatalog (heuristik: label indeholder "uge", fx "Netto uge 45"; nonfood-kataloger som jule-/legetøjs-/vinkataloger frasorteres), og paginerer alle tilbud (maks. 100 ad gangen, ét kald ad gangen med pause). Højst én fuld hentning pr. dag (tjekkes på `offers.fetched_at` for `source='tjek'`).
   - `lib/ai/offerNormalize.ts` normaliserer i portioner af 50 med `CLAUDE_MODEL_FAST`. Kun tilbud uden `ingredient_name` normaliseres (aldrig to gange).
   - `lib/calc/unitPrice.ts` regner kilo-/literpris i kode (ikke AI), med Vitest-tests (`npm run test`).
   - Manuel import (`/tilbud/import`): tekst eller screenshots → samme AI-udtræk (`lib/ai/offerExtract.ts`), samt en håndformular. Serverens body-size-grænse er hævet til 10 MB (`next.config.ts`) for screenshot-upload.
-  - **Endnu ikke testet i praksis** (kræver login, som Claude Code ikke har) - test venligst "Hent tilbud igen" og manuel import på `/tilbud`.
+  - Bekræftet i produktion: "Hent tilbud igen" og manuel import virker begge.
 - Fase 3–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
 
 ## Arkitekturvalg
