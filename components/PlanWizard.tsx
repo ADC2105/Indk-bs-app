@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { startPlanGeneration, continuePlanFix } from "@/app/(app)/planlaeg-uge/actions";
+import { beginGeneration, resolveBatch, finalizeGeneration, beginFix } from "@/app/(app)/planlaeg-uge/actions";
 
 const DAY_OFFSETS = [
   ["mon", 0],
@@ -107,31 +107,71 @@ export default function PlanWizard({
     };
 
     try {
-      const result = await startPlanGeneration(params);
+      const started = await beginGeneration(params);
+      if ("error" in started && started.error) {
+        setError(started.error);
+        setIsGenerating(false);
+        return;
+      }
+      if (!("planId" in started)) {
+        setError("Uventet svar fra serveren.");
+        setIsGenerating(false);
+        return;
+      }
+      const planId = started.planId;
+
+      let remaining = started.remaining;
+      while (remaining > 0) {
+        setStatus(`Matcher og prissætter ingredienser… ${remaining} tilbage`);
+        const batch = await resolveBatch(planId);
+        if ("error" in batch && batch.error) {
+          setError(batch.error);
+          setIsGenerating(false);
+          return;
+        }
+        remaining = "remaining" in batch ? batch.remaining : 0;
+      }
+
+      setStatus("Beregner butiksvalg, priser og status…");
+      let result = await finalizeGeneration(planId);
       if ("error" in result && result.error) {
         setError(result.error);
         setIsGenerating(false);
         return;
       }
-      if (!("planId" in result)) {
-        setError("Uventet svar fra serveren.");
-        setIsGenerating(false);
-        return;
-      }
 
-      let current = result;
-      let round = 0;
-      while ("violations" in current && current.violations.length > 0 && round < 2) {
-        setStatus(`Retter planen til (${current.violations.length} ting at rette)…`);
-        const fixResult = await continuePlanFix(current.planId);
-        if ("error" in fixResult && fixResult.error) {
-          setError(fixResult.error);
+      let round = "round" in result ? result.round : 0;
+      let violations = "violations" in result ? result.violations : [];
+
+      while (violations.length > 0 && round < 2) {
+        setStatus(`Retter planen til (${violations.length} ting at rette)…`);
+        const fix = await beginFix(planId);
+        if ("error" in fix && fix.error) {
+          setError(fix.error);
           break;
         }
-        if (!("planId" in fixResult)) break;
-        current = fixResult;
-        round = fixResult.round;
-        if (fixResult.done) break;
+        if (!("planId" in fix) || fix.done) break;
+
+        let fixRemaining = fix.remaining;
+        while (fixRemaining > 0) {
+          setStatus(`Matcher og prissætter ingredienser… ${fixRemaining} tilbage`);
+          const batch = await resolveBatch(planId);
+          if ("error" in batch && batch.error) {
+            setError(batch.error);
+            fixRemaining = 0;
+            break;
+          }
+          fixRemaining = "remaining" in batch ? batch.remaining : 0;
+        }
+
+        setStatus("Beregner butiksvalg, priser og status…");
+        result = await finalizeGeneration(planId);
+        if ("error" in result && result.error) {
+          setError(result.error);
+          break;
+        }
+        round = "round" in result ? result.round : round;
+        violations = "violations" in result ? result.violations : [];
       }
 
       setStatus("Færdig. Viser ugens plan…");

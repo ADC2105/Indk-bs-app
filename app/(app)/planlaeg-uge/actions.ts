@@ -1,22 +1,50 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { generatePlanDraft, applyPlanFixRound, type BuildPlanParams } from "@/lib/plan/buildPlan";
+import {
+  startPlanGeneration,
+  resolveNextPlanBatch,
+  finalizePlanGeneration,
+  startPlanFix,
+  type BuildPlanParams,
+} from "@/lib/plan/buildPlan";
 
-export async function startPlanGeneration(params: BuildPlanParams) {
+function errorResult(prefix: string, err: unknown) {
+  return { error: prefix + (err instanceof Error ? err.message : "ukendt fejl") };
+}
+
+export async function beginGeneration(params: BuildPlanParams) {
   const supabase = await createClient();
   try {
-    return await generatePlanDraft(supabase, params);
+    return await startPlanGeneration(supabase, params);
   } catch (err) {
-    return { error: "Kunne ikke generere planen: " + (err instanceof Error ? err.message : "ukendt fejl") };
+    return errorResult("Kunne ikke starte generering: ", err);
   }
 }
 
-export async function continuePlanFix(planId: string) {
+export async function resolveBatch(planId: string) {
   const supabase = await createClient();
   try {
-    return await applyPlanFixRound(supabase, planId);
+    return await resolveNextPlanBatch(supabase, planId);
   } catch (err) {
-    return { error: "Kunne ikke rette planen: " + (err instanceof Error ? err.message : "ukendt fejl") };
+    return errorResult("Kunne ikke behandle ingredienser: ", err);
+  }
+}
+
+export async function finalizeGeneration(planId: string) {
+  const supabase = await createClient();
+  try {
+    return await finalizePlanGeneration(supabase, planId);
+  } catch (err) {
+    return errorResult("Kunne ikke færdiggøre planen: ", err);
+  }
+}
+
+export async function beginFix(planId: string) {
+  const supabase = await createClient();
+  try {
+    return await startPlanFix(supabase, planId);
+  } catch (err) {
+    return errorResult("Kunne ikke starte tilretning: ", err);
   }
 }
