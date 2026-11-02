@@ -24,7 +24,18 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
   - `lib/calc/macros.ts`: skalering af næring pr. mængde, portionsfaktor (0,5-2,0), måltidsandele, grøn/gul/rød-status - med Vitest-tests.
   - Faldgrube at huske: i et Claude tool-use-skema skal felter, der kun er relevante i den ene gren af et enten/eller-svar (fx "estimate" når der i stedet blev fundet et match), være `.nullish()` i zod, ikke kun `.nullable()` - Claude udelader typisk hele feltet i stedet for at sende `null`, og `.nullable()` afviser en manglende nøgle.
   - Bekræftet i produktion: Beholdning viser kcal, protein, kulhydrat og fedt pr. 100 g for tilføjede varer.
-- Fase 4–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
+- **Fase 4 (Madplan): bygget, afventer din test.** Den store fase - planlægningsmotor, "Planlæg uge"-guide og "Denne uge"-skærm.
+  - `lib/plan/`: `gatherInput.ts` (samler personer/tilbud/beholdning/historik), `resolveIngredients.ts` (matcher ingredienser til fødevarer og priser, vælger billigste butikskombination via `lib/calc/storeCombos.ts`), `computeStatus.ts` (makrostatus pr. dag/person via `lib/calc/macroMode.ts`, budgetstatus), `buildPlan.ts` (orkestrerer det hele).
+  - `lib/ai/planGenerate.ts` (`CLAUDE_MODEL_PLANNER`): forslag til retter, tilretning (højst to runder) og "byt"-alternativer - samme værktøjsskema til alle tre.
+  - **Delt op i trin pga. Vercels tidsgrænse** (samme lektie som fase 2's tilbudshentning, bare værre her: en hel uges ingredienser skal både matches til fødevarer *og* prissættes med AI): `generatePlanDraft` (ét Claude-kald + al ingrediens-matching) og `applyPlanFixRound` (kaldes af klienten op til to gange) er separate Server Actions. Ingrediens-matching og pris-estimering kører parallelt (`Promise.all`), ikke sekventielt, for at holde hvert kald under Vercels loft.
+  - **Forenklet i denne omgang** (kan udvides senere, hvis du vil):
+    - Måltidsgitteret i "Planlæg uge" har kun til/fra pr. måltid - ikke "hvem spiser med" eller gæster (antager altid "begge"). Matcher SPEC.md's eget færdig-kriterie (5 aftensmåltider, 2 personer), men dækker ikke gæster/enkeltpersoner endnu.
+    - "Byt" får ikke tilbudslisten med (for at holde det hurtigt) - alternativerne bruger normalpris, ikke aktuelle tilbud.
+    - Efter et "byt" genberegnes kun det ene måltids egen pris/næring (vist som "+X kr/+Y g protein"), ikke hele ugens dag-status på ny.
+    - "Forventede rester" (SPEC.md) er ikke bygget - hører naturligt til fase 6 (ugens afslutning).
+  - Ingen ny migration denne fase - alle nødvendige tabeller/kolonner lå allerede i fase 1's skema.
+  - **Endnu ikke testet i praksis.** Test via "Planlæg uge" (fx 5 aftensmåltider, Balanceret, 700 kr.) → "Denne uge" → tjek status, prøv lås og byt.
+- Fase 5–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
 
 ## Arkitekturvalg
 
