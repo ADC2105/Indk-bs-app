@@ -24,16 +24,32 @@ async function resolveDealerIds(
   return resolved;
 }
 
-async function normalizeAndSave(supabase: Awaited<ReturnType<typeof createClient>>, offerIds: string[]) {
-  if (offerIds.length === 0) return;
+const NORMALIZE_BATCH_SIZE = 50;
 
-  const { data: toNormalize } = await supabase
+/**
+ * Normaliserer op til 50 endnu-ikke-normaliserede tilbud (ét Claude-kald) og
+ * returnerer, hvor mange der stadig mangler. Hentning og normalisering er
+ * bevidst delt op i små trin, så hvert serverkald er hurtigt nok til at nå
+ * at blive færdigt inden for Vercels tidsgrænse - klienten kalder denne
+ * funktion i et loop, indtil "remaining" er 0, med en statusvisning imellem.
+ */
+export async function normalizeNextBatch(): Promise<
+  { remaining: number; error?: undefined } | { error: string; remaining?: undefined }
+> {
+  const supabase = await createClient();
+
+  const { data: toNormalize, error: fetchError } = await supabase
     .from("offers")
     .select("id, heading, description, price, quantity_text")
-    .in("id", offerIds)
-    .is("ingredient_name", null);
+    .is("ingredient_name", null)
+    .limit(NORMALIZE_BATCH_SIZE);
 
-  if (!toNormalize || toNormalize.length === 0) return;
+  if (fetchError) {
+    return { error: "Kunne ikke hente tilbud til normalisering: " + fetchError.message };
+  }
+  if (!toNormalize || toNormalize.length === 0) {
+    return { remaining: 0 };
+  }
 
   const input: OfferToNormalize[] = toNormalize.map((o) => ({
     id: o.id,
@@ -43,7 +59,12 @@ async function normalizeAndSave(supabase: Awaited<ReturnType<typeof createClient
     quantityText: o.quantity_text,
   }));
 
-  const normalized = await normalizeOffers(supabase, input);
+  let normalized;
+  try {
+    normalized = await normalizeOffers(supabase, input);
+  } catch (err) {
+    return { error: "Normalisering fejlede: " + (err instanceof Error ? err.message : "ukendt fejl") };
+  }
 
   for (const n of normalized) {
     await supabase
@@ -62,6 +83,14 @@ async function normalizeAndSave(supabase: Awaited<ReturnType<typeof createClient
       })
       .eq("id", n.id);
   }
+
+  const { count } = await supabase
+    .from("offers")
+    .select("id", { count: "exact", head: true })
+    .is("ingredient_name", null);
+
+  revalidatePath("/tilbud");
+  return { remaining: count ?? 0 };
 }
 
 export async function fetchOffersFromTjek() {
@@ -148,25 +177,10 @@ export async function fetchOffersFromTjek() {
     fetched_at: now,
   }));
 
-  const { data: saved, error } = await supabase
-    .from("offers")
-    .upsert(upsertRows, { onConflict: "store_id,external_id" })
-    .select("id");
+  const { error } = await supabase.from("offers").upsert(upsertRows, { onConflict: "store_id,external_id" });
 
   if (error) {
     return { error: "Kunne ikke gemme tilbuddene: " + error.message };
-  }
-
-  try {
-    await normalizeAndSave(supabase, (saved ?? []).map((r) => r.id));
-  } catch (err) {
-    revalidatePath("/tilbud");
-    return {
-      ok: true,
-      warning:
-        "Tilbud blev hentet, men normaliseringen fejlede delvist: " +
-        (err instanceof Error ? err.message : "ukendt fejl"),
-    };
   }
 
   revalidatePath("/tilbud");

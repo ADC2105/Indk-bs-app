@@ -107,7 +107,7 @@ export default function OfferBrowser({ offers }: { offers: OfferRow[] }) {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return offers.filter((o) => {
-      if (o.is_food === false) return false;
+      if (o.is_food !== true) return false; // skjul endnu ikke normaliserede og nonfood
       if (category && o.category !== category) return false;
       if (term) {
         const haystack = `${o.heading} ${o.ingredient_name ?? ""}`.toLowerCase();

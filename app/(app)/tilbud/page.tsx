@@ -3,6 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import FetchOffersButton from "@/components/FetchOffersButton";
 import OfferBrowser, { type OfferRow } from "@/components/OfferBrowser";
 
+// Henter flere kataloger sekventielt med høflige pauser, så standard 10s er
+// for lavt. 60s er Vercel Hobby-loftet for serverfunktioner/-actions.
+export const maxDuration = 60;
+
 export default async function TilbudPage() {
   const supabase = await createClient();
 
@@ -12,6 +16,11 @@ export default async function TilbudPage() {
       "id, heading, ingredient_name, category, price, quantity_text, pack_count, pack_size, pack_unit, total_price, needs_review, is_food, wanted, stores(name)",
     )
     .order("heading");
+
+  const { count: pendingCount } = await supabase
+    .from("offers")
+    .select("id", { count: "exact", head: true })
+    .is("ingredient_name", null);
 
   const offers: OfferRow[] = (data ?? []).map((o) => ({
     id: o.id,
@@ -39,7 +48,7 @@ export default async function TilbudPage() {
         </Link>
       </div>
 
-      <FetchOffersButton />
+      <FetchOffersButton initialPending={pendingCount ?? 0} />
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">

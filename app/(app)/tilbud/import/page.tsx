@@ -4,6 +4,8 @@ import ManualTextImport from "@/components/ManualTextImport";
 import ManualImageImport from "@/components/ManualImageImport";
 import ManualOfferForm from "@/components/ManualOfferForm";
 
+export const maxDuration = 60;
+
 export default async function TilbudImportPage() {
   const supabase = await createClient();
   const { data: stores } = await supabase.from("stores").select("id, name").eq("enabled", true).order("name");
