@@ -57,10 +57,12 @@ async function fetchCatalogsForDealers(
 }
 
 /**
- * Vælger den/de dagligvarekataloger for én kæde, der gælder på indkøbsdagen.
- * Kædernes ugentlige tilbudsavis indeholder typisk "uge" i navnet (fx
- * "Netto uge 45", "Lidl avis (uge 45)") - det bruges som det primære signal.
- * Åbenlyse nonfood-kataloger (jul, legetøj, vin ...) frasorteres altid.
+ * Vælger de dagligvarekataloger for én kæde, der gælder på indkøbsdagen.
+ * Kæderne udgiver ofte flere kataloger samtidig (en ugentlig avis og en
+ * sæson-/kampagneavis, fx Rema 1000's "Meget Mere REMA 1000" eller Lidl's
+ * "Fast lav pris i Lidl"), og mælk, æg, pålæg og frugt/grønt kan sagtens stå
+ * i kampagneavisen frem for ugeavisen. Derfor tages alle gyldige kataloger
+ * med - kun de åbenlyse nonfood-kataloger (jul, legetøj, vin ...) frasorteres.
  */
 function pickGroceryCatalogs(catalogs: TjekCatalog[], shoppingDate: Date): TjekCatalog[] {
   const validToday = catalogs.filter((c) => {
@@ -69,18 +71,9 @@ function pickGroceryCatalogs(catalogs: TjekCatalog[], shoppingDate: Date): TjekC
     return from <= shoppingDate && shoppingDate <= until;
   });
 
-  const food = validToday.filter(
+  return validToday.filter(
     (c) => !NONFOOD_KEYWORDS.some((kw) => c.label.toLowerCase().includes(kw)),
   );
-
-  const weekly = food.filter((c) => /uge\s*\d+/i.test(c.label));
-  if (weekly.length > 0) return weekly;
-
-  // Ingen tydelig "uge N"-avis fundet - brug den største (flest sider) som fallback.
-  if (food.length > 0) {
-    return [food.reduce((a, b) => (b.page_count > a.page_count ? b : a))];
-  }
-  return [];
 }
 
 type TjekOffer = {
