@@ -106,35 +106,45 @@ export default function PlanWizard({
       primaryStoreId,
     };
 
-    const result = await startPlanGeneration(params);
-    if ("error" in result && result.error) {
-      setError(result.error);
-      setIsGenerating(false);
-      return;
-    }
-    if (!("planId" in result)) {
-      setError("Uventet svar fra serveren.");
-      setIsGenerating(false);
-      return;
-    }
-
-    let current = result;
-    let round = 0;
-    while ("violations" in current && current.violations.length > 0 && round < 2) {
-      setStatus(`Retter planen til (${current.violations.length} ting at rette)…`);
-      const fixResult = await continuePlanFix(current.planId);
-      if ("error" in fixResult && fixResult.error) {
-        setError(fixResult.error);
-        break;
+    try {
+      const result = await startPlanGeneration(params);
+      if ("error" in result && result.error) {
+        setError(result.error);
+        setIsGenerating(false);
+        return;
       }
-      if (!("planId" in fixResult)) break;
-      current = fixResult;
-      round = fixResult.round;
-      if (fixResult.done) break;
-    }
+      if (!("planId" in result)) {
+        setError("Uventet svar fra serveren.");
+        setIsGenerating(false);
+        return;
+      }
 
-    setStatus("Færdig. Viser ugens plan…");
-    router.push("/denne-uge");
+      let current = result;
+      let round = 0;
+      while ("violations" in current && current.violations.length > 0 && round < 2) {
+        setStatus(`Retter planen til (${current.violations.length} ting at rette)…`);
+        const fixResult = await continuePlanFix(current.planId);
+        if ("error" in fixResult && fixResult.error) {
+          setError(fixResult.error);
+          break;
+        }
+        if (!("planId" in fixResult)) break;
+        current = fixResult;
+        round = fixResult.round;
+        if (fixResult.done) break;
+      }
+
+      setStatus("Færdig. Viser ugens plan…");
+      router.push("/denne-uge");
+    } catch (err) {
+      setError(
+        "Noget gik galt undervejs (muligvis en tidsgrænse på serveren): " +
+          (err instanceof Error ? err.message : "ukendt fejl") +
+          ". Prøv igen - allerede genererede dele af planen er gemt.",
+      );
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   return (

@@ -129,6 +129,18 @@ export async function gatherPlanInput(
       };
     });
 
+  // Begræns antallet af tilbud i planlægningsprompten - en fuld ugehentning
+  // kan nemt give flere hundrede, hvilket gjorde Claude-kaldet langsomt nok
+  // til at risikere Vercels tidsgrænse. "Skal med"-tilbud bevares altid.
+  const MAX_OFFERS_IN_PROMPT = 150;
+  gatheredOffers.sort((a, b) => {
+    if (a.wanted !== b.wanted) return a.wanted ? -1 : 1;
+    const aPrice = a.pricePer100gProtein ?? Infinity;
+    const bPrice = b.pricePer100gProtein ?? Infinity;
+    return aPrice - bPrice;
+  });
+  const limitedOffers = gatheredOffers.slice(0, MAX_OFFERS_IN_PROMPT);
+
   const pantryItems = (pantry ?? []).filter((p) => !p.is_staple);
   const staples = (pantry ?? []).filter((p) => p.is_staple).map((p) => p.name);
 
@@ -159,7 +171,7 @@ export async function gatherPlanInput(
       mealShares: settings?.meal_shares ?? {},
       tolerances: settings?.tolerances ?? {},
     },
-    offers: gatheredOffers,
+    offers: limitedOffers,
     pantry: pantryItems.map((p) => ({
       id: p.id,
       name: p.name,

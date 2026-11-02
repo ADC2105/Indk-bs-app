@@ -24,20 +24,25 @@ type CallClaudeToolArgs<T> = {
  */
 export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T> {
   const attempt = async () => {
-    const response = await anthropic.messages.create({
-      model: args.model,
-      max_tokens: args.maxTokens ?? 4096,
-      system: args.system,
-      messages: [{ role: "user", content: args.userMessage }],
-      tools: [
-        {
-          name: args.toolName,
-          description: args.toolDescription,
-          input_schema: args.inputSchema,
-        },
-      ],
-      tool_choice: { type: "tool", name: args.toolName },
-    });
+    const response = await anthropic.messages.create(
+      {
+        model: args.model,
+        max_tokens: args.maxTokens ?? 4096,
+        system: args.system,
+        messages: [{ role: "user", content: args.userMessage }],
+        tools: [
+          {
+            name: args.toolName,
+            description: args.toolDescription,
+            input_schema: args.inputSchema,
+          },
+        ],
+        tool_choice: { type: "tool", name: args.toolName },
+      },
+      // Fejl hurtigt i stedet for at hænge - SDK'ens standard-timeout (10
+      // min.) er langt over Vercels tidsgrænse for serverfunktioner.
+      { timeout: 45_000 },
+    );
 
     await args.supabase.from("ai_calls").insert({
       purpose: args.purpose,
