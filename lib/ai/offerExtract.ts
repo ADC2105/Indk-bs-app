@@ -79,6 +79,7 @@ export async function extractOffersFromText(
     toolDescription: "Gem de tilbud, der er fundet i teksten",
     inputSchema,
     zodSchema: resultSchema,
+    maxTokens: 8192,
   });
 
   return result.tilbud.map((o) => ({
@@ -113,6 +114,7 @@ export async function extractOffersFromImages(
     toolDescription: "Gem de tilbud, der er fundet på billedet/billederne",
     inputSchema,
     zodSchema: resultSchema,
+    maxTokens: 8192,
   });
 
   return result.tilbud.map((o) => ({

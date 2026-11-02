@@ -14,6 +14,7 @@ type CallClaudeToolArgs<T> = {
   toolDescription: string;
   inputSchema: Anthropic.Tool.InputSchema;
   zodSchema: ZodType<T>;
+  maxTokens?: number;
 };
 
 /**
@@ -25,7 +26,7 @@ export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T>
   const attempt = async () => {
     const response = await anthropic.messages.create({
       model: args.model,
-      max_tokens: 4096,
+      max_tokens: args.maxTokens ?? 4096,
       system: args.system,
       messages: [{ role: "user", content: args.userMessage }],
       tools: [
@@ -44,6 +45,10 @@ export async function callClaudeTool<T>(args: CallClaudeToolArgs<T>): Promise<T>
       input_tokens: response.usage.input_tokens,
       output_tokens: response.usage.output_tokens,
     });
+
+    if (response.stop_reason === "max_tokens") {
+      throw new Error("Svaret fra Claude blev afskåret (nåede max_tokens) - prøv en mindre portion ad gangen");
+    }
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",

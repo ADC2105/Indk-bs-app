@@ -119,6 +119,7 @@ export async function normalizeOffers(
       toolDescription: "Gem de normaliserede tilbud",
       inputSchema,
       zodSchema: batchResultSchema,
+      maxTokens: 8192,
     });
 
     results.push(...result.tilbud);
