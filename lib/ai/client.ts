@@ -9,7 +9,7 @@ type CallClaudeToolArgs<T> = {
   purpose: string;
   model: string;
   system: string;
-  userMessage: string;
+  userMessage: string | Anthropic.MessageParam["content"];
   toolName: string;
   toolDescription: string;
   inputSchema: Anthropic.Tool.InputSchema;
