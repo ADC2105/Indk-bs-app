@@ -11,6 +11,7 @@ type PantryItem = {
   location: "køleskab" | "fryser" | "skab" | null;
   use_soon: boolean;
   is_staple: boolean;
+  food: { kcal: number; protein: number; source: string } | null;
 };
 
 const LOCATION_LABELS: Record<string, string> = {
@@ -23,10 +24,13 @@ export default async function BeholdningPage() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("pantry_items")
-    .select("id, name, quantity, unit, location, use_soon, is_staple")
+    .select("id, name, quantity, unit, location, use_soon, is_staple, foods(kcal, protein, source)")
     .order("name");
 
-  const items = (data ?? []) as PantryItem[];
+  const items = (data ?? []).map((row) => ({
+    ...row,
+    food: (row.foods as unknown as { kcal: number; protein: number; source: string } | null) ?? null,
+  })) as PantryItem[];
   const staples = items.filter((item) => item.is_staple);
   const byLocation: Record<string, PantryItem[]> = { køleskab: [], fryser: [], skab: [] };
   for (const item of items) {
@@ -67,6 +71,7 @@ export default async function BeholdningPage() {
                   quantity={item.quantity}
                   unit={item.unit}
                   useSoon={item.use_soon}
+                  food={item.food}
                   isStaple={item.is_staple}
                 />
               ))}
@@ -87,6 +92,7 @@ export default async function BeholdningPage() {
                 quantity={item.quantity}
                 unit={item.unit}
                 useSoon={item.use_soon}
+                food={item.food}
                 isStaple={item.is_staple}
               />
             ))}

@@ -43,6 +43,10 @@ yarn-error.log*
 # supabase cli cache
 supabase/.temp/
 
+# lokale datafiler til engangs-importscripts (fx Frida/FCDB) - lægges kun lokalt
+data/
+Data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

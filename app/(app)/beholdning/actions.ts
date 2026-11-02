@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { parsePantryText, pantryParseItemSchema } from "@/lib/ai/pantryParse";
+import { matchIngredientToFood } from "@/lib/foods/matchIngredient";
 
 export async function previewPantryText(text: string) {
   if (!text.trim()) {
@@ -37,17 +38,33 @@ export async function confirmPantryItems(items: unknown) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("pantry_items").insert(
-    parsed.data.map((item) => ({
-      name: item.name,
-      quantity: item.quantity,
-      unit: item.unit,
-      location: item.location,
-    })),
-  );
+  const { data: saved, error } = await supabase
+    .from("pantry_items")
+    .insert(
+      parsed.data.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        location: item.location,
+      })),
+    )
+    .select("id, name");
 
   if (error) {
     return { error: "Kunne ikke gemme varerne: " + error.message };
+  }
+
+  // Match hver vare til næringsdata (Frida eller et AI-estimat). Fejl her må
+  // ikke forhindre, at varerne er gemt i beholdningen.
+  for (const item of saved ?? []) {
+    try {
+      const foodId = await matchIngredientToFood(supabase, item.name);
+      if (foodId) {
+        await supabase.from("pantry_items").update({ food_id: foodId }).eq("id", item.id);
+      }
+    } catch {
+      // Beholdningen vises stadig uden næringsdata for denne vare.
+    }
   }
 
   revalidatePath("/beholdning");

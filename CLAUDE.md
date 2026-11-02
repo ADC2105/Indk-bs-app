@@ -15,7 +15,15 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
   - `lib/calc/unitPrice.ts` regner kilo-/literpris i kode (ikke AI), med Vitest-tests (`npm run test`).
   - Manuel import (`/tilbud/import`): tekst eller screenshots → samme AI-udtræk (`lib/ai/offerExtract.ts`), samt en håndformular. Serverens body-size-grænse er hævet til 10 MB (`next.config.ts`) for screenshot-upload.
   - Bekræftet i produktion: "Hent tilbud igen" og manuel import virker begge.
-- Fase 3–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
+- **Fase 3 (Næringsdata): færdig, afventer din test.** Frida hedder nu "FCDB" (Den Danske Fødevaredatabase) og har fået nyt format, version 6.1 maj 2026 - en relationel Excel-eksport (ark: Food, Parameter, Data_Normalised m.fl.), ikke en simpel liste.
+  - `scripts/import-frida.mjs` læser `data/FCDB_6.1_Dataset.xlsx`, henter kcal/protein/kulhydrat/fedt/fiber pr. fødevare fra `Data_Normalised` (ParameterID 356/218/172/141/168) og importerer til `foods`. 1389 fødevarer importeret. Kør med `npm run import-frida`.
+    - "Kulhydrat" = "Tilgængelig kulhydrat" (ParameterID 172), ikke "Kulhydrat difference" - matcher det, danske næringsdeklarationer viser.
+    - `data/`-mappen er lokal og git-ignoreret (ligesom `.env.local`) - læg filen der igen, hvis du arbejder fra en ny maskine.
+  - `lib/foods/matchIngredient.ts`: cache (`ingredient_food_map`) → `pg_trgm`-kandidater (Postgres-funktionen `match_foods_by_trigram`) → Claude vælger bedste match eller estimerer. Koblet på Beholdningens "hurtig tilføjelse", så varer får næringsdata (estimater vises med "≈").
+    - Bekræftet med SPEC.md's egne eksempler: "hakket svinekød 8-12%" → "Grisekød, hakket, 5-10% fedt, råt", "spidskål" → "Spidskål, rå".
+  - `lib/calc/macros.ts`: skalering af næring pr. mængde, portionsfaktor (0,5-2,0), måltidsandele, grøn/gul/rød-status - med Vitest-tests.
+  - Afventer din test: åbn Beholdning og se, om varer viser kcal/protein pr. 100 g.
+- Fase 4–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
 
 ## Arkitekturvalg
 
@@ -31,6 +39,7 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
   - "Opskrifter" og "Indstillinger" (de to resterende skærme fra SPEC.md) er endnu ikke linket noget sted – tilføjes i de faser, hvor de giver mening.
 - **PWA**: `app/manifest.ts` + ikoner genereret med `next/og`'s `ImageResponse` (`app/icon.tsx`, `app/apple-icon.tsx`, `app/icons/icon-192`, `app/icons/icon-512`) – ingen eksterne billedfiler eller nyt afhængighed. Ingen service worker/offline-cache (ikke krævet).
 - **Validering**: `zod` er installeret og bruges allerede i login-formularen (`app/login/actions.ts`).
+- **xlsx**: installeret fra SheetJS' egen CDN (`https://cdn.sheetjs.com/...`), ikke npm-registry-versionen - npm-udgaven har en uprettet høj-alvorlig sårbarhed. ESM-byggets `XLSX.readFile(sti)` fejler desuden på denne maskine, fordi projektstien indeholder "ø" - scripts læser derfor filen selv med `fs.readFileSync` og giver XLSX en buffer (`XLSX.read(buffer, { type: "buffer" })`).
 
 ## Miljøvariabler
 

@@ -10,9 +10,10 @@ type Props = {
   unit: string | null;
   useSoon: boolean;
   isStaple: boolean;
+  food?: { kcal: number; protein: number; source: string } | null;
 };
 
-export default function PantryItemRow({ id, name, quantity, unit, useSoon, isStaple }: Props) {
+export default function PantryItemRow({ id, name, quantity, unit, useSoon, isStaple, food }: Props) {
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -22,6 +23,8 @@ export default function PantryItemRow({ id, name, quantity, unit, useSoon, isSta
         <p className="text-xs text-gray-500">
           {quantity != null ? `${quantity}${unit ? " " + unit : ""}` : "ukendt mængde"}
           {useSoon && " · brug snart"}
+          {food &&
+            ` · ${food.source === "estimate" ? "≈" : ""}${Math.round(food.kcal)} kcal/${Math.round(food.protein)} g protein pr. 100 g`}
         </p>
       </div>
 
