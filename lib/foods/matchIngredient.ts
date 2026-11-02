@@ -33,19 +33,20 @@ export async function matchIngredientToFood(
 
   const result = await matchIngredientWithClaude(supabase, name, candidates ?? []);
 
-  let foodId = result.food_id;
-  let confidence = result.confidence;
+  let foodId = result.food_id ?? null;
+  let confidence = result.confidence ?? null;
+  const estimate = result.estimate ?? null;
 
-  if (!foodId && result.estimate) {
+  if (!foodId && estimate) {
     const { data: inserted, error: insertError } = await supabase
       .from("foods")
       .insert({
         name_da: name,
-        kcal: result.estimate.kcal,
-        protein: result.estimate.protein,
-        carbs: result.estimate.carbs,
-        fat: result.estimate.fat,
-        fiber: result.estimate.fiber,
+        kcal: estimate.kcal,
+        protein: estimate.protein,
+        carbs: estimate.carbs,
+        fat: estimate.fat,
+        fiber: estimate.fiber ?? null,
         source: "estimate",
       })
       .select("id")

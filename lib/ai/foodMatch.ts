@@ -3,18 +3,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { callClaudeTool } from "./client";
 import { INGREDIENT_MATCH_PROMPT } from "./prompts/ingrediensMatch";
 
+// Claude udelader ofte helt den gren af svaret, den ikke bruger (fx
+// "estimate", når der er fundet et match), i stedet for at sætte den til
+// null. Felterne skal derfor tåle at mangle helt, ikke kun være nullable.
 const matchResultSchema = z.object({
-  food_id: z.string().uuid().nullable(),
-  confidence: z.number().min(0).max(1).nullable(),
+  food_id: z.string().uuid().nullish(),
+  confidence: z.number().min(0).max(1).nullish(),
   estimate: z
     .object({
       kcal: z.number(),
       protein: z.number(),
       carbs: z.number(),
       fat: z.number(),
-      fiber: z.number().nullable(),
+      fiber: z.number().nullish(),
     })
-    .nullable(),
+    .nullish(),
 });
 
 export type FoodMatchResult = z.infer<typeof matchResultSchema>;
