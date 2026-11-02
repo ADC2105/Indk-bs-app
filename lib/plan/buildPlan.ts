@@ -302,6 +302,21 @@ export async function finalizePlanGeneration(supabase: SupabaseClient, planId: s
   const meals = draft.meals;
   const locked = await getLockedMeals(supabase, planId);
 
+  // Slår op direkte i ingredient_food_map i stedet for kun at stole på
+  // draft.foodIdByName - mere robust, og dækker også evt. ingredienser,
+  // der blev matchet før denne plan (fx via Beholdning).
+  const allIngredientNames = Array.from(new Set(meals.flatMap((m) => m.ingredients.map((i) => i.name.toLowerCase()))));
+  const { data: foodMapRows } =
+    allIngredientNames.length > 0
+      ? await supabase.from("ingredient_food_map").select("ingredient_name, food_id").in("ingredient_name", allIngredientNames)
+      : { data: [] };
+  const foodIdByName = new Map<string, string | null>(
+    (foodMapRows ?? []).map((r) => [r.ingredient_name, r.food_id]),
+  );
+  for (const [name, id] of Object.entries(draft.foodIdByName)) {
+    if (!foodIdByName.has(name)) foodIdByName.set(name, id);
+  }
+
   const { data: settings } = await supabase.from("settings").select("max_stores, primary_store_id").eq("id", true).maybeSingle();
   const maxStores = settings?.max_stores ?? 2;
   const primaryStoreId = settings?.primary_store_id ?? null;
@@ -384,7 +399,7 @@ export async function finalizePlanGeneration(supabase: SupabaseClient, planId: s
   const resolved: ResolvedIngredient[] = [];
   meals.forEach((meal, mealIndex) => {
     for (const ing of meal.ingredients) {
-      const foodId = draft.foodIdByName[ing.name.toLowerCase()] ?? null;
+      const foodId = foodIdByName.get(ing.name.toLowerCase()) ?? null;
       let costDkk = 0;
       if (ing.source === "offer" && ing.offer_id && offersById.has(ing.offer_id)) {
         const key = groupKey({ kind: "offer", offerId: ing.offer_id });
