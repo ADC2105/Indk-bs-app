@@ -72,15 +72,17 @@ function buildUserMessage(
   locked: LockedMeal[],
   violations: string[],
   alreadyPlanned: PlannerMeal[],
+  budgetPerMeal: number | null,
 ): string {
   const peopleLines = input.people
     .map((p) => `${p.id} | ${p.name} | mål: ${p.kcal} kcal, ${p.protein_g} g protein, ${p.carbs_g} g kulhydrat, ${p.fat_g} g fedt | tilstand: ${p.macroMode}`)
     .join("\n");
 
   const lockedLines = locked.map((l) => `${l.date} ${l.meal_type}: ${l.recipes?.title ?? "?"} (LÅST, foreslå ikke denne)`).join("\n");
+  const budgetIsIssue = violations.some((v) => v.includes("Budget overskredet"));
   const violationsBlock =
     violations.length > 0
-      ? `\n\nDEN NUVÆRENDE PLAN HOLDER IKKE HELT - KONKRETE BRUD, DER HELST SKAL RETTES, HVIS DENNE RET BERØRER DEM:\n${violations.join("\n")}`
+      ? `\n\nDEN NUVÆRENDE PLAN HOLDER IKKE HELT - KONKRETE BRUD, DER HELST SKAL RETTES, HVIS DENNE RET BERØRER DEM:\n${violations.join("\n")}${budgetIsIssue ? "\nDa budgettet er sprængt, skal DENNE ret være tydeligt billigere end gennemsnittet - brug tilbud og billige basisvarer, undgå dyre proteiner som oksefilet/laks/rejer, medmindre de er på tilbud." : ""}`
       : "";
 
   const plannedLines = [...locked.map((l) => l.recipes?.title ?? "?"), ...alreadyPlanned.map((m) => m.title)];
@@ -89,7 +91,12 @@ function buildUserMessage(
       ? `\n\nALLEREDE PLANLAGT DENNE UGE (brug ikke samme hovedråvare/protein igen her, medmindre det er en helt anden type ret):\n${plannedLines.join(", ")}`
       : "";
 
-  return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}${plannedBlock}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nVIGTIGT OM BEHOLDNING: kilde "pantry" må kun bruges, hvis varen og mængden reelt findes i beholdningslisten ovenfor, og kun i ÉT måltid denne uge - er den allerede brugt (se "allerede planlagt"), eller er mængden større end det, der står på lager, så brug kilde "buy" i stedet. Basisvarer ("staple") må gerne genbruges frit.\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
+  const budgetBlock =
+    budgetPerMeal != null
+      ? `\n\nBUDGET: husstanden har i alt ca. ${Math.round(budgetPerMeal)} kr. at bruge på NYE indkøb til denne ene ret (varer fra beholdning/basisvarer/tilbud tæller ikke med i det beløb, men almindelige køb skal holdes inden for det). Prioritér tilbud og billige råvarer for at holde budgettet - det er et loft, ikke kun en rettesnor.`
+      : "";
+
+  return `MÅLTID, DER SKAL FORESLÅS (kun denne ene):\n${slot.date} ${slot.meal_type}\n\nLÅSTE MÅLTIDER (til kontekst, må ikke ændres):\n${lockedLines || "(ingen)"}${plannedBlock}${budgetBlock}\n\nPERSONER:\n${peopleLines}\n\nMaks. tilberedningstid på hverdage: ${input.settings.maxPrepWeekdayMin} minutter.\nTing vi ikke spiser: ${input.settings.dislikes.join(", ") || "ingen"}.\nAllergier: ${input.settings.allergies.join(", ") || "ingen"}.\n\nTILBUD (id | navn | butik | pakke | pris | kilopris | kcal/100g | protein/100g | pris/100g protein | evt. SKAL_MED):\n${formatOffersCompact(input.offers)}\n\n${formatPantryCompact(input)}\n\nVIGTIGT OM BEHOLDNING: kilde "pantry" må kun bruges, hvis varen og mængden reelt findes i beholdningslisten ovenfor, og kun i ÉT måltid denne uge - er den allerede brugt (se "allerede planlagt"), eller er mængden større end det, der står på lager, så brug kilde "buy" i stedet. Basisvarer ("staple") må gerne genbruges frit.\n\nRetter fra de sidste tre uger (undgå gentagelse): ${input.recentRecipeTitles.join(", ") || "ingen"}.\nFavoritretter (gerne igen): ${input.favoriteRecipeTitles.join(", ") || "ingen"}.\n\nUgens ønsker: ${input.wishes || "ingen"}.${violationsBlock}`;
 }
 
 async function getLockedMeals(supabase: SupabaseClient, planId: string): Promise<LockedMeal[]> {
@@ -239,10 +246,13 @@ export async function resolveNextPlanBatch(supabase: SupabaseClient, planId: str
   if (draft.phase === "meals") {
     const slot = draft.pendingSlots[0];
     const locked = await getLockedMeals(supabase, planId);
-    const { data: plan } = await supabase.from("week_plans").select("macro_modes, wishes").eq("id", planId).single();
+    const { data: plan } = await supabase.from("week_plans").select("macro_modes, wishes, budget").eq("id", planId).single();
     const input = await gatherPlanInput(supabase, plan?.macro_modes ?? {}, plan?.wishes ?? "");
 
-    const userMessage = buildUserMessage(input, slot, locked, draft.violations, draft.meals);
+    const totalSlotsThisRun = draft.meals.length + draft.pendingSlots.length;
+    const budgetPerMeal = plan?.budget && totalSlotsThisRun > 0 ? plan.budget / totalSlotsThisRun : null;
+
+    const userMessage = buildUserMessage(input, slot, locked, draft.violations, draft.meals, budgetPerMeal);
     const result = await generateMealPlan(supabase, userMessage);
     if (result.meals.length > 0) {
       draft.meals.push({ ...result.meals[0], date: slot.date, meal_type: slot.meal_type });

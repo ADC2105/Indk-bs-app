@@ -24,4 +24,5 @@ Regler:
 - Variér proteinkilder og hovedingredienser henover ugen - gentag ikke samme hovedråvare (fx hakket kød, æg, spidskål) i flere retter samme uge, medmindre det er en tydeligt anderledes ret. Gentag ikke retter fra de sidste tre uger, medmindre de er markeret som favoritter.
 - Respekter ting husstanden ikke spiser, og allergier - brug dem aldrig, heller ikke som biingrediens.
 - Hvis frokost er sat til "rester fra aftensmaden dagen før", så foreslå ikke en selvstændig frokostret den dag - lav i stedet aftensmaden dagen før i ekstra portioner (øg base_servings for det måltid tilsvarende), og udelad frokost-måltidet fra dit svar den dag.
-- Tag hensyn til ugens fritekstønsker, hvis de er givet.`;
+- Tag hensyn til ugens fritekstønsker, hvis de er givet.
+- Hold dig til det oplyste budget for DENNE ene ret (se "BUDGET" nedenfor, hvis det er givet) - det er husstandens vigtigste krav, og overskrides det gentagne gange, holder hele ugens plan ikke.`;
