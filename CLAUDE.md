@@ -6,7 +6,9 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
 
 - **Fase 0 (Opsætning): færdig og testet.** Next.js-skelet, Supabase-login, tom bundmenu, PWA-manifest. Login bekræftet fra telefon via Vercel-adressen `madplan-app-weld.vercel.app`.
   - Husk: Vercel-projektets Framework Preset skal stå på "Next.js" (ingen build/output-overrides) – blev rettet manuelt efter første deploy.
-- Fase 1–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
+- **Fase 1 (Grunddata): færdig og testet.** Alle 15 tabeller migreret, Indstillinger (personer, butikker, måltidsgitter, måltidsandele, budget m.m.), Beholdning med AI-tolket hurtig tilføjelse, basisvare-checkliste og seed-data (2 personer, lille beholdning, eksempeltilbud, ~90 estimerede priser). Bekræftet i produktion: fritekst → beholdning, og indstillinger gemmer.
+  - Faldgrube at huske: filer med `"use server"` må kun eksportere async-funktioner. Konstanter (DAYS, MEAL_TYPES) lå først i `indstillinger/actions.ts` og gav en ødelagt reference i produktion (men ikke lokalt/i build) – flyttet til egen `constants.ts`. Tjek for dette mønster, hvis en ny "virker lokalt, fejler i prod"-fejl dukker op i en `actions.ts`-fil.
+- Fase 2–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
 
 ## Arkitekturvalg
 
