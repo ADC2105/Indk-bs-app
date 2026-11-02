@@ -4,7 +4,8 @@ Se `SPEC.md` for den fulde specifikation. Denne fil holder styr på beslutninger
 
 ## Status
 
-- **Fase 0 (Opsætning): færdig.** Next.js-skelet, Supabase-login, tom bundmenu, PWA-manifest. Afventer din test fra telefonen via Vercel-adressen.
+- **Fase 0 (Opsætning): færdig og testet.** Next.js-skelet, Supabase-login, tom bundmenu, PWA-manifest. Login bekræftet fra telefon via Vercel-adressen `madplan-app-weld.vercel.app`.
+  - Husk: Vercel-projektets Framework Preset skal stå på "Next.js" (ingen build/output-overrides) – blev rettet manuelt efter første deploy.
 - Fase 1–6: ikke startet, se `SPEC.md` → "Byggeplan i faser".
 
 ## Arkitekturvalg
